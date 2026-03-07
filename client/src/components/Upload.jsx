@@ -1,152 +1,213 @@
 import { useState } from "react";
-import { QRCodeSVG } from "qrcode.react";
 import axios from "axios";
-import { generateId } from "../utils/generateId";
-import { FileUp, Share2, Copy, File } from "lucide-react";
+import {
+  Copy,
+  UploadCloud,
+  Lock,
+  File,
+  CheckCircle,
+  Loader2,
+} from "lucide-react";
 
 function Upload() {
   const [file, setFile] = useState(null);
   const [password, setPassword] = useState("");
   const [fileId, setFileId] = useState("");
-  const [shareLink, setShareLink] = useState("");
+  const [qrCode, setQrCode] = useState("");
+  const [downloadLink, setDownloadLink] = useState("");
   const [status, setStatus] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleUpload = async () => {
-    if (!file || !password) {
-      alert("File and Password required");
-      return;
-    }
-
-    setStatus("Uploading...");
-    const id = generateId();
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("password", password);
-    formData.append("id", id);
+    if (!file || !password) return;
+    setLoading(true);
+    setStatus("Processing...");
 
     try {
-      await axios.post("http://localhost:5000/upload", formData);
+      const res = await axios.put("http://localhost:3000/geturl", {
+        fileName: file.name,
+        fileType: file.type,
+        password: password,
+      });
 
-      const link = `${window.location.origin}/download?id=${id}`;
+      const { uploadUrl, id, qrCode } = res.data;
       setFileId(id);
-      setShareLink(link);
-      setStatus("Success");
-    } catch (err) {
+      setQrCode(qrCode);
+      setDownloadLink(`http://localhost:5173/download/${id}`);
+
+      setStatus("Uploading...");
+
+      await axios.put(uploadUrl, file, {
+        headers: { "Content-Type": file.type },
+      });
+
+      setReady(true);
       setStatus("");
-      alert("Upload failed. Ensure backend is running.");
+    } catch (err) {
+      console.error(err);
+      setStatus("Upload failed. Try again.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(shareLink);
-    alert("Link copied to clipboard!");
-  };
-
-  const whatsappShare = () => {
-    const url = `https://wa.me/?text=I've shared a secure file with you.%0A%0A*Link:* ${shareLink}%0A*Password:* ${password}`;
-    window.open(url, "_blank");
+  const copyLink = () => {
+    navigator.clipboard.writeText(downloadLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <div className="page-container">
-      <div className="card">
-        <div className="card-header">
-          <h2>Secure Upload</h2>
-        </div>
+    <div className="card">
+      {!ready ? (
+        <>
+          <h2 className="card-title">
+            <UploadCloud color="#6366f1" /> Secure Upload
+          </h2>
+          <p className="card-subtitle">Encrypt and share your files safely.</p>
 
-        {!fileId ? (
-          <>
-            <div className="form-group">
-              <label htmlFor="file-upload" className="file-upload-box">
-                {file ? (
-                  <>
-                    <File size={32} color="#4b5563" />
-                    <span style={{ color: "#111827", fontWeight: "500" }}>
-                      {file.name}
-                    </span>
-                    <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>
-                      Click to change file
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <FileUp size={32} color="#9ca3af" />
-                    <span style={{ color: "#4b5563" }}>
-                      Click to browse files
-                    </span>
-                    <span style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
-                      Any file format supported
-                    </span>
-                  </>
-                )}
-                <input
-                  id="file-upload"
-                  type="file"
-                  onChange={(e) => setFile(e.target.files[0])}
+          <div className="file-drop-area">
+            <input
+              type="file"
+              className="hidden-file-input"
+              onChange={(e) => setFile(e.target.files[0])}
+            />
+            {file ? (
+              <>
+                <File size={32} color="#6366f1" style={{ margin: "0 auto" }} />
+                <p style={{ fontWeight: "600", marginTop: "10px" }}>
+                  {file.name}
+                </p>
+                <p style={{ fontSize: "0.8rem", color: "#64748b" }}>
+                  {(file.size / 1024 / 1024).toFixed(2)} MB
+                </p>
+              </>
+            ) : (
+              <>
+                <UploadCloud
+                  size={32}
+                  color="#94a3b8"
+                  style={{ margin: "0 auto" }}
                 />
-              </label>
-            </div>
+                <p style={{ color: "#64748b", marginTop: "10px" }}>
+                  Drag & drop or click to select
+                </p>
+              </>
+            )}
+          </div>
 
-            <div className="form-group">
-              <label>Encryption Password</label>
+          <div className="input-group">
+            <label className="input-label">Protect with Password</label>
+            <div className="input-wrapper">
               <input
                 type="password"
-                placeholder="Set a secure password"
+                className="text-input"
+                placeholder="Create a strong password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+          </div>
 
-            <button
-              className="btn-primary"
-              onClick={handleUpload}
-              disabled={status === "Uploading..."}
-            >
-              <FileUp size={18} />
-              {status === "Uploading..."
-                ? "Encrypting & Uploading..."
-                : "Upload File"}
-            </button>
-          </>
-        ) : (
-          <div className="result-box">
-            <div className="result-item">
-              <span style={{ color: "#6b7280" }}>File ID</span>
-              <strong style={{ fontFamily: "monospace" }}>{fileId}</strong>
-            </div>
-            <div className="result-item">
-              <span style={{ color: "#6b7280" }}>Password</span>
-              <strong style={{ fontFamily: "monospace" }}>{password}</strong>
-            </div>
+          <button
+            className="btn-primary"
+            onClick={handleUpload}
+            disabled={loading || !file || !password}
+          >
+            {loading ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <UploadCloud size={20} />
+            )}
+            {loading ? "Encrypting..." : "Encrypt & Upload"}
+          </button>
 
-            <div className="qr-wrapper">
-              <QRCodeSVG value={shareLink} size={160} level="H" />
-            </div>
+          <p
+            style={{
+              textAlign: "center",
+              marginTop: "12px",
+              color: "#64748b",
+              fontSize: "0.9rem",
+            }}
+          >
+            {status}
+          </p>
+        </>
+      ) : (
+        <div style={{ textAlign: "center" }}>
+          <CheckCircle
+            size={48}
+            color="#10b981"
+            style={{ margin: "0 auto 16px" }}
+          />
+          <h2 className="card-title" style={{ marginBottom: "20px" }}>
+            Upload Complete
+          </h2>
 
-            <div style={{ display: "flex", gap: "10px", marginTop: "1.5rem" }}>
-              <button className="btn-secondary" onClick={copyToClipboard}>
-                <Copy size={18} /> Copy Link
-              </button>
-              <button className="btn-primary" onClick={whatsappShare}>
-                <Share2 size={18} /> WhatsApp
-              </button>
-            </div>
-
-            <button
-              className="btn-secondary"
-              style={{ marginTop: "10px", border: "none" }}
-              onClick={() => {
-                setFileId("");
-                setFile(null);
-                setPassword("");
+          <div className="input-group" style={{ textAlign: "center" }}>
+            <p className="input-label" style={{ textAlign: "left" }}>
+              Shareable Link
+            </p>
+            <div
+              style={{
+                background: "#f8fafc",
+                padding: "12px",
+                borderRadius: "8px",
+                border: "1px solid #cbd5e1",
+                fontSize: "0.85rem",
+                marginBottom: "12px",
+                wordBreak: "break-all",
               }}
             >
-              Upload Another File
+              {downloadLink}
+            </div>
+            <button
+              className="btn-primary"
+              onClick={copyLink}
+              style={{
+                backgroundColor: "#f1f5f9",
+                color: "#0f172a",
+                border: "1px solid #cbd5e1",
+              }}
+            >
+              {copied ? (
+                <CheckCircle size={18} color="#10b981" />
+              ) : (
+                <Copy size={18} />
+              )}
+              {copied ? "Copied to Clipboard" : "Copy Link"}
             </button>
           </div>
-        )}
-      </div>
+
+          {qrCode && (
+            <div style={{ margin: "24px 0" }}>
+              <img
+                src={qrCode}
+                alt="QR Code"
+                style={{
+                  borderRadius: "8px",
+                  border: "1px solid #cbd5e1",
+                  padding: "8px",
+                  width: "130px",
+                }}
+              />
+            </div>
+          )}
+
+          <button
+            className="btn-primary"
+            onClick={() => {
+              setReady(false);
+              setFile(null);
+              setPassword("");
+            }}
+          >
+            Upload Another File
+          </button>
+        </div>
+      )}
     </div>
   );
 }

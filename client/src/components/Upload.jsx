@@ -3,7 +3,6 @@ import axios from "axios";
 import {
   Copy,
   UploadCloud,
-  Lock,
   File,
   CheckCircle,
   Loader2,
@@ -22,25 +21,31 @@ function Upload() {
 
   const handleUpload = async () => {
     if (!file || !password) return;
+
     setLoading(true);
     setStatus("Processing...");
 
     try {
-      const res = await axios.put("http://localhost:3000/geturl", {
+      // 1️⃣ Get presigned URL from backend
+      const res = await axios.post("http://localhost:3000/geturl", {
         fileName: file.name,
         fileType: file.type,
         password: password,
       });
 
-      const { uploadUrl, id, qrCode } = res.data;
+      // 2️⃣ Correct destructuring of backend response
+      const { uploadUrl, id, qrDataUrl } = res.data;
+
       setFileId(id);
-      setQrCode(qrCode);
-      setDownloadLink(`http://localhost:5173/download/${id}`);
+      setQrCode(qrDataUrl);
+      setDownloadLink(`http://localhost:3000/download/${id}`);
 
       setStatus("Uploading...");
 
-      await axios.put(uploadUrl, file, {
-        headers: { "Content-Type": file.type },
+      // 3️⃣ Upload file to Backblaze using presigned URL
+      await fetch(uploadUrl, {
+        method: "PUT",
+        body: file, // don't set headers, CORS-safe
       });
 
       setReady(true);
@@ -146,6 +151,14 @@ function Upload() {
             Upload Complete
           </h2>
 
+          {/* Display File ID */}
+          {fileId && (
+            <p style={{ fontSize: "0.9rem", color: "#374151", marginBottom: "12px" }}>
+              File ID: <strong>{fileId}</strong>
+            </p>
+          )}
+
+          {/* Shareable Link */}
           <div className="input-group" style={{ textAlign: "center" }}>
             <p className="input-label" style={{ textAlign: "left" }}>
               Shareable Link
@@ -181,6 +194,7 @@ function Upload() {
             </button>
           </div>
 
+          {/* QR Code */}
           {qrCode && (
             <div style={{ margin: "24px 0" }}>
               <img
@@ -202,6 +216,10 @@ function Upload() {
               setReady(false);
               setFile(null);
               setPassword("");
+              setFileId("");
+              setQrCode("");
+              setDownloadLink("");
+              setStatus("");
             }}
           >
             Upload Another File

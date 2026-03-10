@@ -1,12 +1,6 @@
 import { useState } from "react";
 import axios from "axios";
-import {
-  Copy,
-  UploadCloud,
-  File,
-  CheckCircle,
-  Loader2,
-} from "lucide-react";
+import { Copy, UploadCloud, File, CheckCircle, Loader2 } from "lucide-react";
 
 function Upload() {
   const [file, setFile] = useState(null);
@@ -26,12 +20,26 @@ function Upload() {
     setStatus("Processing...");
 
     try {
-      // 1️⃣ Get presigned URL from backend
+      // Calculate file size in MB
+      const fileSizeMB = file.size / (1024 * 1024);
+
+      // Decide expiry
+      let expiry;
+      if (fileSizeMB < 10) {
+        expiry = 3600; // 1 hour
+      } else {
+        expiry = 86400; // 1 day
+      }
+
+      // Request presigned URL from backend
       const res = await axios.post("http://localhost:3000/geturl", {
         fileName: file.name,
         fileType: file.type,
         password: password,
+        expiry: expiry,
       });
+
+      
 
       // 2️⃣ Correct destructuring of backend response
       const { uploadUrl, id, qrDataUrl } = res.data;
@@ -153,7 +161,13 @@ function Upload() {
 
           {/* Display File ID */}
           {fileId && (
-            <p style={{ fontSize: "0.9rem", color: "#374151", marginBottom: "12px" }}>
+            <p
+              style={{
+                fontSize: "0.9rem",
+                color: "#374151",
+                marginBottom: "12px",
+              }}
+            >
               File ID: <strong>{fileId}</strong>
             </p>
           )}

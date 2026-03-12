@@ -1,48 +1,44 @@
-import { useState } from "react";
-
+import { useState, useEffect } from "react";
 import axios from "axios";
-
 import { DownloadCloud, FileKey, Loader2 } from "lucide-react";
+import { useParams } from "react-router-dom";
 
 function Download() {
+  const { id } = useParams();
+
   const [fileId, setFileId] = useState("");
-
   const [password, setPassword] = useState("");
-
   const [status, setStatus] = useState("");
-
   const [loading, setLoading] = useState(false);
 
-  const handleDownload = async () => {
-    // Basic validation for both fields
+  // Auto-fill File ID from URL (when user opens link or QR)
+  useEffect(() => {
+    if (id) {
+      setFileId(id);
+    }
+  }, [id]);
 
+  const handleDownload = async () => {
     if (!fileId || !password) {
       setStatus("Please enter both File ID and password.");
-
       return;
     }
 
     setLoading(true);
-
-    setStatus("Verifying...");
+    setStatus("Verifying credentials...");
 
     try {
-      // Updated: ID is removed from the URL and moved into the data body
-
-      const res = await axios.post(`http://localhost:3000/download`, {
+      const res = await axios.post("http://localhost:3000/download", {
         id: fileId,
-
         password: password,
       });
 
-      // Assuming the server returns a temporary download link
-
+      // redirect to download link returned by backend
       window.location.href = res.data.downloadUrl;
 
       setStatus("Download starting...");
     } catch (err) {
       console.error(err);
-
       setStatus("Incorrect ID, password, or file missing.");
     } finally {
       setLoading(false);
@@ -52,24 +48,21 @@ function Download() {
   return (
     <div
       className="card"
-      style={{ textAlign: "center", maxWidth: "400px", margin: "40px auto" }}
+      style={{
+        textAlign: "center",
+        maxWidth: "420px",
+        margin: "40px auto",
+      }}
     >
       <div
         style={{
           background: "#e0e7ff",
-
           width: "64px",
-
           height: "64px",
-
           borderRadius: "50%",
-
           display: "flex",
-
           alignItems: "center",
-
           justifyContent: "center",
-
           margin: "0 auto 20px",
         }}
       >
@@ -78,45 +71,47 @@ function Download() {
 
       <h2 className="card-title">Secure Download</h2>
 
-      <p className="card-subtitle">
-        Enter your credentials to access the file.
-      </p>
+      <p className="card-subtitle">Enter your credentials to access the file</p>
 
       <div
         className="input-group"
-        style={{ display: "flex", flexDirection: "column", gap: "12px" }}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "12px",
+          marginTop: "20px",
+        }}
       >
-        {/* File ID Input */}
+        {/* File ID */}
 
-        <div className="input-wrapper">
-          <input
-            type="text"
-            className="text-input"
-            placeholder="Enter File ID"
-            value={fileId}
-            onChange={(e) => setFileId(e.target.value)}
-          />
-        </div>
+        <input
+          type="text"
+          className="text-input"
+          placeholder="Enter File ID"
+          value={fileId}
+          onChange={(e) => setFileId(e.target.value)}
+        />
 
-        {/* Password Input */}
+        {/* Password */}
 
-        <div className="input-wrapper">
-          <input
-            type="password"
-            className="text-input"
-            placeholder="Enter file password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleDownload()}
-          />
-        </div>
+        <input
+          type="password"
+          className="text-input"
+          placeholder="Enter File Password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleDownload()}
+        />
       </div>
 
       <button
         className="btn-primary"
         onClick={handleDownload}
-        style={{ marginTop: "20px", width: "100%" }}
-        disabled={loading || !password || !fileId}
+        disabled={loading || !fileId || !password}
+        style={{
+          marginTop: "20px",
+          width: "100%",
+        }}
       >
         {loading ? (
           <Loader2 className="animate-spin" size={20} />
@@ -131,9 +126,7 @@ function Download() {
         <p
           style={{
             marginTop: "16px",
-
             fontSize: "0.9rem",
-
             color: status.includes("Incorrect") ? "#ef4444" : "#64748b",
           }}
         >

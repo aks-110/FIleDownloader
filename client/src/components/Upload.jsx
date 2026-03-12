@@ -5,9 +5,11 @@ import { Copy, UploadCloud, File, CheckCircle, Loader2 } from "lucide-react";
 function Upload() {
   const [file, setFile] = useState(null);
   const [password, setPassword] = useState("");
+
   const [fileId, setFileId] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [downloadLink, setDownloadLink] = useState("");
+
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
@@ -15,10 +17,14 @@ function Upload() {
 
   const [timeLeft, setTimeLeft] = useState(0);
   const [expiryTime, setExpiryTime] = useState(null);
+  const [initialTime, setInitialTime] = useState(0);
 
-  // ---------------------------
-  // Restore upload state
-  // ---------------------------
+  const [progress, setProgress] = useState(0);
+
+  // -------------------------
+  // Restore state after refresh
+  // -------------------------
+
   useEffect(() => {
     const saved = localStorage.getItem("uploadData");
 
@@ -36,14 +42,18 @@ function Upload() {
     setDownloadLink(data.link);
 
     setExpiryTime(data.expiry);
-    setTimeLeft(Math.floor((data.expiry - Date.now()) / 1000));
+    setInitialTime(data.initialTime);
+
+    const remaining = Math.floor((data.expiry - Date.now()) / 1000);
+    setTimeLeft(remaining);
 
     setReady(true);
   }, []);
 
-  // ---------------------------
+  // -------------------------
   // Countdown timer
-  // ---------------------------
+  // -------------------------
+
   useEffect(() => {
     if (!expiryTime) return;
 
@@ -53,13 +63,7 @@ function Upload() {
       if (remaining <= 0) {
         clearInterval(interval);
         localStorage.removeItem("uploadData");
-
         setReady(false);
-        setFile(null);
-        setPassword("");
-        setFileId("");
-        setQrCode("");
-        setDownloadLink("");
       } else {
         setTimeLeft(remaining);
       }
@@ -68,23 +72,26 @@ function Upload() {
     return () => clearInterval(interval);
   }, [expiryTime]);
 
-  // ---------------------------
-  // Upload logic
-  // ---------------------------
+  // -------------------------
+  // Upload
+  // -------------------------
+
   const handleUpload = async () => {
     if (!file || !password) return;
 
     setLoading(true);
+    setProgress(0);
     setStatus("Processing...");
 
     try {
       const fileSizeMB = file.size / (1024 * 1024);
 
       let expiry;
+
       if (fileSizeMB < 10) {
-        expiry = 3600;
+        expiry = 3600; // 1 hour
       } else {
-        expiry = 86400;
+        expiry = 86400; // 1 day
       }
 
       const res = await axios.post("http://localhost:3000/geturl", {
@@ -96,16 +103,23 @@ function Upload() {
 
       const { uploadUrl, id, qrDataUrl } = res.data;
 
-      setStatus("Uploading...");
+      await axios.put(uploadUrl, file, {
+        headers: {
+          "Content-Type": file.type,
+        },
+        onUploadProgress: (progressEvent) => {
+          const percent = Math.round(
+            (progressEvent.loaded * 100) / progressEvent.total,
+          );
 
-      await fetch(uploadUrl, {
-        method: "PUT",
-        body: file,
+          setProgress(percent);
+          setStatus(`Uploading... ${percent}%`);
+        },
       });
 
-      const expire = Date.now() + 5 * 60 * 1000;
+      const link = `http://localhost:5173/download/${id}`;
 
-      const link = `http://localhost:3000/download/${id}`;
+      const expire = Date.now() + expiry * 1000;
 
       localStorage.setItem(
         "uploadData",
@@ -114,6 +128,7 @@ function Upload() {
           qrCode: qrDataUrl,
           link,
           expiry: expire,
+          initialTime: expiry,
         }),
       );
 
@@ -122,32 +137,63 @@ function Upload() {
       setDownloadLink(link);
 
       setExpiryTime(expire);
-      setTimeLeft(300);
+      setTimeLeft(expiry);
+      setInitialTime(expiry);
 
       setReady(true);
       setStatus("");
     } catch (err) {
       console.error(err);
-      setStatus("Upload failed. Try again.");
+      setStatus("Upload failed");
     } finally {
       setLoading(false);
     }
   };
 
+  // -------------------------
+  // Copy link
+  // -------------------------
+
   const copyLink = () => {
     navigator.clipboard.writeText(downloadLink);
+
     setCopied(true);
+
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // ---------------------------
-  // Circle Timer Component
-  // ---------------------------
-  const CircleTimer = ({ timeLeft }) => {
+  // -------------------------
+  // Upload another file
+  // -------------------------
+
+  const uploadAnother = () => {
+    localStorage.removeItem("uploadData");
+
+    setFile(null);
+    setPassword("");
+
+    setFileId("");
+    setQrCode("");
+    setDownloadLink("");
+
+    setReady(false);
+    setStatus("");
+    setProgress(0);
+
+    setTimeLeft(0);
+    setExpiryTime(null);
+    setInitialTime(0);
+  };
+
+  // -------------------------
+  // Circle timer
+  // -------------------------
+
+  const CircleTimer = ({ timeLeft, initialTime }) => {
     const radius = 45;
     const circumference = 2 * Math.PI * radius;
 
-    const progress = timeLeft / 300;
+    const progressCircle = timeLeft / initialTime;
 
     return (
       <svg width="120" height="120">
@@ -168,28 +214,22 @@ function Upload() {
           strokeWidth="8"
           fill="none"
           strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - progress)}
+          strokeDashoffset={circumference * (1 - progressCircle)}
           strokeLinecap="round"
           transform="rotate(-90 60 60)"
         />
 
-        <text
-          x="50%"
-          y="50%"
-          textAnchor="middle"
-          dy=".3em"
-          fontSize="16"
-          fill="#111"
-        >
+        <text x="50%" y="50%" textAnchor="middle" dy=".3em" fontSize="14">
           {Math.floor(timeLeft / 60)}:{("0" + (timeLeft % 60)).slice(-2)}
         </text>
       </svg>
     );
   };
 
-  // ---------------------------
+  // -------------------------
   // UI
-  // ---------------------------
+  // -------------------------
+
   return (
     <div className="card">
       {!ready ? (
@@ -243,7 +283,7 @@ function Upload() {
               <UploadCloud size={20} />
             )}
 
-            {loading ? "Encrypting..." : "Encrypt & Upload"}
+            {loading ? "Uploading..." : "Encrypt & Upload"}
           </button>
 
           <p>{status}</p>
@@ -258,22 +298,16 @@ function Upload() {
 
           <h2>Upload Complete</h2>
 
-          {/* TIMER */}
-
           {timeLeft > 0 && (
             <div style={{ margin: "20px 0" }}>
-              <CircleTimer timeLeft={timeLeft} />
-              <p style={{ fontSize: "0.85rem" }}>Link visible for 5 minutes</p>
+              <CircleTimer timeLeft={timeLeft} initialTime={initialTime} />
+              <p style={{ fontSize: "0.85rem" }}>File expires automatically</p>
             </div>
           )}
-
-          {/* FILE ID */}
 
           <p>
             File ID: <strong>{fileId}</strong>
           </p>
-
-          {/* LINK */}
 
           <div style={{ marginTop: "20px" }}>
             <p>Shareable Link</p>
@@ -298,8 +332,6 @@ function Upload() {
             </button>
           </div>
 
-          {/* QR */}
-
           {qrCode && (
             <div style={{ marginTop: "20px" }}>
               <img src={qrCode} alt="QR Code" style={{ width: "130px" }} />
@@ -308,19 +340,10 @@ function Upload() {
 
           <button
             className="btn-primary"
+            onClick={uploadAnother}
             style={{ marginTop: "20px" }}
-            onClick={() => {
-              localStorage.removeItem("uploadData");
-
-              setReady(false);
-              setFile(null);
-              setPassword("");
-              setFileId("");
-              setQrCode("");
-              setDownloadLink("");
-            }}
           >
-            Upload Another File
+            <UploadCloud size={18} /> Upload Another File
           </button>
         </div>
       )}

@@ -1,7 +1,9 @@
 import { Worker } from 'bullmq';
 import { DeleteQueue } from './Queue.mjs';
 import IORedis from 'ioredis';
+import File  from '../Models/FileModel.mjs';
 const connection = new IORedis({maxRetriesPerRequest: null});
+
 
 let authToken = null
 let apiUrl = null
@@ -35,14 +37,17 @@ async function deleteFile(fileId, fileName) {
   }catch(err){
     console.log(err);
   }
-
 }
 
-const worker = new Worker('DeleteQueue', async (job)=>{
-  const { key, fileName } = job.data
-  console.log('got it');
-  await deleteFile(key, fileName);
-  console.log('deleted');
+export const delworker = new Worker('DeleteQueue', async (job)=>{
+  switch (job.name) {
+    case 'delete-file':
+      await deleteFile(job.data.key, job.data.fileName)
+      break;
+    case 'delete-db':
+      await File.findByIdAndDelete(job.data.id)
+      break;
+    default:
+      break;
+  }
 },{connection})
-
-export default worker;

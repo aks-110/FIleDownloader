@@ -2,7 +2,8 @@ import express from "express"
 import dotenv from "dotenv"
 import {route as getPreUrlRoute} from "./routes/getpreurl.mjs"
 import {route as downloadRoute} from "./routes/download.mjs"
-
+import {route as multipartRoute} from "./routes/mulipart.mjs"
+import {route as completeMultipartRoute} from "./routes/completemultipart.mjs"
 dotenv.config();
 import cors from "cors"
 import mongoose from "mongoose"
@@ -19,6 +20,9 @@ app.use(express.json());
 app.use(cors());
 app.use('/',getPreUrlRoute);
 app.use('/',downloadRoute);
+app.use('/',multipartRoute);
+app.use('/',completeMultipartRoute);
+
 app.listen(process.env.PORT,(req,res)=>{
   console.log(`Running at Port ${process.env.PORT}`);
 });

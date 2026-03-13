@@ -19,6 +19,7 @@ function Upload() {
   // ---------------------------
   // Restore upload state
   // ---------------------------
+
   useEffect(() => {
     const saved = localStorage.getItem("uploadData");
 
@@ -44,6 +45,7 @@ function Upload() {
   // ---------------------------
   // Countdown timer
   // ---------------------------
+
   useEffect(() => {
     if (!expiryTime) return;
 
@@ -71,39 +73,118 @@ function Upload() {
   // ---------------------------
   // Upload logic
   // ---------------------------
+
   const handleUpload = async () => {
     if (!file || !password) return;
 
     setLoading(true);
-    setStatus("Processing...");
+    setStatus("Preparing upload...");
 
     try {
       const fileSizeMB = file.size / (1024 * 1024);
 
       let expiry;
+
       if (fileSizeMB < 10) {
         expiry = 3600;
       } else {
         expiry = 86400;
       }
 
+      // GET STRATEGY FROM BACKEND
+
       const res = await axios.post("http://localhost:3000/geturl", {
         fileName: file.name,
         fileType: file.type,
-        password: password,
-        expiry: expiry,
+        password,
+        filesize: file.size,
+        expiry,
       });
 
-      const { uploadUrl, id, qrDataUrl } = res.data;
+      const { strategy, uploadUrl, id, qrDataUrl, partsize ,key} = res.data;
 
-      setStatus("Uploading...");
+      // ---------------------------
+      // SINGLE UPLOAD
+      // ---------------------------
 
-      await fetch(uploadUrl, {
-        method: "PUT",
-        body: file,
-      });
+      if (strategy === "single") {
+        setStatus("Uploading file...");
 
-      const expire = Date.now() + 5 * 60 * 1000;
+        await fetch(uploadUrl, {
+          method: "PUT",
+          body: file,
+        });
+      }
+
+      if (strategy === "multipart") {
+        setStatus("Uploading large file...");
+      
+        const uploadId = uploadUrl;
+        const chunkSize = partsize;
+      
+        const parts = Math.ceil(file.size / chunkSize);
+      
+        const urlRes = await axios.post("http://localhost:3000/multipart", {
+          uploadId,
+          key,
+          parts
+        });
+      
+        const { urls } = urlRes.data;
+      
+        const uploadedParts = [];
+      
+        const CONCURRENCY = 5; // max parallel uploads
+      
+        let currentIndex = 0;
+      
+        async function uploadWorker() {
+          while (currentIndex < parts) {
+      
+            const i = currentIndex++;
+            
+            const start = i * chunkSize;
+            const end = Math.min(start + chunkSize, file.size);
+      
+            const chunk = file.slice(start, end);
+      
+            const uploadRes = await fetch(urls[i], {
+              method: "PUT",
+              body: chunk
+            });
+      
+            if (!uploadRes.ok) {
+              throw new Error(`Chunk ${i + 1} failed`);
+            }
+      
+            const etag = uploadRes.headers
+              .get("ETag")
+              ?.replaceAll('"', "");
+      
+            uploadedParts.push({
+              ETag: etag,
+              PartNumber: i + 1
+            });
+      
+            setStatus(`Uploading ${i + 1} / ${parts}`);
+          }
+        }
+      
+        const workers = [];
+      
+        for (let i = 0; i < CONCURRENCY; i++) {
+          workers.push(uploadWorker());
+        }
+      
+        await Promise.all(workers);
+      
+        await axios.post("http://localhost:3000/completeMultipart", {
+          uploadId,
+          key,
+          parts: uploadedParts
+        });
+      }
+      const expire = Date.now() + expiry * 1000;
 
       const link = `http://localhost:3000/download/${id}`;
 
@@ -114,15 +195,14 @@ function Upload() {
           qrCode: qrDataUrl,
           link,
           expiry: expire,
-        }),
+        })
       );
 
       setFileId(id);
       setQrCode(qrDataUrl);
       setDownloadLink(link);
-
       setExpiryTime(expire);
-      setTimeLeft(300);
+      setTimeLeft(expiry);
 
       setReady(true);
       setStatus("");
@@ -141,8 +221,9 @@ function Upload() {
   };
 
   // ---------------------------
-  // Circle Timer Component
+  // Circle Timer
   // ---------------------------
+
   const CircleTimer = ({ timeLeft }) => {
     const radius = 45;
     const circumference = 2 * Math.PI * radius;
@@ -190,6 +271,7 @@ function Upload() {
   // ---------------------------
   // UI
   // ---------------------------
+
   return (
     <div className="card">
       {!ready ? (
@@ -243,7 +325,7 @@ function Upload() {
               <UploadCloud size={20} />
             )}
 
-            {loading ? "Encrypting..." : "Encrypt & Upload"}
+            {loading ? "Uploading..." : "Encrypt & Upload"}
           </button>
 
           <p>{status}</p>
@@ -258,22 +340,16 @@ function Upload() {
 
           <h2>Upload Complete</h2>
 
-          {/* TIMER */}
-
           {timeLeft > 0 && (
             <div style={{ margin: "20px 0" }}>
               <CircleTimer timeLeft={timeLeft} />
-              <p style={{ fontSize: "0.85rem" }}>Link visible for 5 minutes</p>
+              <p style={{ fontSize: "0.85rem" }}>Link visible temporarily</p>
             </div>
           )}
-
-          {/* FILE ID */}
 
           <p>
             File ID: <strong>{fileId}</strong>
           </p>
-
-          {/* LINK */}
 
           <div style={{ marginTop: "20px" }}>
             <p>Shareable Link</p>
@@ -297,8 +373,6 @@ function Upload() {
               {copied ? "Copied" : "Copy Link"}
             </button>
           </div>
-
-          {/* QR */}
 
           {qrCode && (
             <div style={{ marginTop: "20px" }}>

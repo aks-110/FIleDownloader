@@ -4,8 +4,8 @@ export const rate=async(req,res,next) => {
   const ip = req.ip;
   const key = `rate:${ip}`;
   console.log(ip);
-  const window = 36;
-  const limit = 3;
+  const window = 3600;
+  const limit = 5;
   const current = await client.INCR(key);
   if(current === 1){
     client.EXPIRE(key, window);

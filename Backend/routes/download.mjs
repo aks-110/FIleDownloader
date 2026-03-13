@@ -17,7 +17,7 @@ route.post('/download', async (req, res) => {
   try {
     const {password,id} = req.body;
     if (!id) return res.status(400).json({ message: "fileId required" });
-    
+
     const file = await File.findOne({ id: id });
     if (!file) return res.status(404).json({ message: "File not found" });
     const isValid = bcrypt.compareSync(password, file.password);

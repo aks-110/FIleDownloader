@@ -129,10 +129,13 @@ function Upload() {
           link,
           expiry: expire,
           initialTime: expiry,
+
+          
         }),
       );
 
       setFileId(id);
+       
       setQrCode(qrDataUrl);
       setDownloadLink(link);
 

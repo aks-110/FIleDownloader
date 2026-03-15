@@ -2,8 +2,11 @@ import { Worker } from 'bullmq';
 import { DeleteQueue } from './Queue.mjs';
 import IORedis from 'ioredis';
 import File  from '../Models/FileModel.mjs';
-const connection = new IORedis({maxRetriesPerRequest: null});
-
+const connection = new IORedis({
+  host: process.env.REDIS_HOST || "localhost",
+  port: process.env.REDIS_PORT || 6379,
+  maxRetriesPerRequest: null
+});
 
 let authToken = null
 let apiUrl = null

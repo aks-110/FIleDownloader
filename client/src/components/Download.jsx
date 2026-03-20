@@ -23,23 +23,29 @@ function Download() {
       setStatus("Please enter both File ID and password.");
       return;
     }
-
+  
     setLoading(true);
     setStatus("Verifying credentials...");
-
+  
     try {
       const res = await axios.post("http://localhost:3000/download", {
         id: fileId,
         password: password,
       });
-
-      // redirect to download link returned by backend
-      window.location.href = res.data.downloadUrl;
-
-      setStatus("Download starting...");
+  
+      // create hidden anchor
+      const link = document.createElement("a");
+      link.href = res.data.downloadUrl;
+      link.setAttribute("download", ""); // let browser decide filename
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+  
+      // NOW React still stays on page ✅
+      setStatus("✅ File delivered to browser!");
     } catch (err) {
       console.error(err);
-      setStatus("Incorrect ID, password, or file missing.");
+      setStatus("❌ Incorrect ID, password, or file missing.");
     } finally {
       setLoading(false);
     }

@@ -9,6 +9,8 @@ import { rate } from '../rate/ratelimiter.mjs';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcrypt'
+import { bandwidthLimiter } from '../rate/Bandwidth.mjs';
+
 
 dotenv.config();
 
@@ -23,6 +25,11 @@ route.post('/download', async (req, res) => {
     const isValid = bcrypt.compareSync(password, file.password);
     if (!isValid) return res.status(401).json({ message: "Invalid password" });    
     const originalFileName = file.filekey.split('-').slice(1).join('-');
+    const filesize = file.filesize;
+    const { allowed } = await bandwidthLimiter(file.key, filesize);
+    if (!allowed) {
+      return res.status(429).json({ message: "Download rate exceeded" });
+    }
     const command = new GetObjectCommand({
       Bucket: process.env.BUCKET_NAME,
       Key: file.filekey,

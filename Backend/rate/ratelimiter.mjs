@@ -1,17 +1,21 @@
-import {client} from '../BackBlaze/redisClient.mjs'
+import { slidingWindowLimiter } from "./slidingWindow.mjs";
 
-export const rate=async(req,res,next) => {
-  const ip = req.ip;
-  const key = `rate:${ip}`;
-  console.log(ip);
-  const window = 3600;
-  const limit = 5;
-  const current = await client.INCR(key);
-  if(current === 1){
-    client.EXPIRE(key, window);
+export const rate = async (req, res, next) => {
+  try {
+    const ip = req.ip || req.connection.remoteAddress;
+
+    const key = `rate_limit:${ip}`;
+
+    const result = await slidingWindowLimiter(key);
+
+    if (!result.allowed) {
+      return res.status(429).json({
+        message: "Too many requests",
+      });
+    }
+
+    next();
+  } catch (err) {
+    console.error("Rate limiter error:", err);
   }
-  if(current > limit){
-    return res.status(429).json({ message: 'too many reequests' });
-  }
-  next();
 };

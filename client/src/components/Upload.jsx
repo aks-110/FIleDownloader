@@ -338,9 +338,9 @@ function Upload() {
       let expireTime = Date.now() + expiry * 1000;
 
       if (strategy === "single") {
-        await axios.put(uploadUrl, activeFile, {
+        const typelessPayload = activeFile.slice(0, activeFile.size);
+        await axios.put(uploadUrl, typelessPayload, {
           ...reqConfig,
-          headers: { "Content-Type": activeFile.type },
           onUploadProgress: (e) => {
             const percent = Math.round((e.loaded * 100) / e.total);
             setProgress(percent);

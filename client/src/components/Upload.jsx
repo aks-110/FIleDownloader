@@ -10,14 +10,19 @@ import {
   RefreshCcw,
   Hash,
   X,
-  Type,
+  AlertTriangle,
 } from "lucide-react";
 
 function Upload() {
   const [textInput, setTextInput] = useState("");
-  const [textFileName, setTextFileName] = useState(""); // Custom file name for text
+  const [textFileName, setTextFileName] = useState("");
   const [file, setFile] = useState(null);
   const [password, setPassword] = useState("");
+  const [uploadedParts, setUploadedParts] = useState([]);
+  const [paused, setPaused] = useState(false);
+
+  // Replaces the old resumeMeta. Triggers the auto-resume UI if valid.
+  const [pendingResume, setPendingResume] = useState(null);
 
   const [fileId, setFileId] = useState("");
   const [qrCode, setQrCode] = useState("");
@@ -37,6 +42,7 @@ function Upload() {
   const abortControllerRef = useRef(null);
   const uploadMetaRef = useRef(null);
   const fileInputRef = useRef(null);
+  const isPausedRef = useRef(false);
 
   // Format file sizes clearly
   const formatSize = (bytes) => {
@@ -46,28 +52,23 @@ function Upload() {
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
-  // 1. Restore state after refresh
   useEffect(() => {
     const saved = localStorage.getItem("uploadData");
-    if (!saved) return;
-
-    const data = JSON.parse(saved);
-
-    if (data.uploading || Date.now() > data.expiry) {
-      localStorage.removeItem("uploadData");
-      return;
+    if (saved) {
+      const data = JSON.parse(saved);
+      if (data.uploading || Date.now() > data.expiry) {
+        localStorage.removeItem("uploadData");
+      } else {
+        setFileId(data.id);
+        setQrCode(data.qrCode);
+        setDownloadLink(data.link);
+        setExpiryTime(data.expiry);
+        setInitialTime(data.initialTime);
+        setReady(true);
+      }
     }
-
-    setFileId(data.id);
-    setQrCode(data.qrCode);
-    setDownloadLink(data.link);
-    setExpiryTime(data.expiry);
-    setInitialTime(data.initialTime);
-
-    setReady(true);
   }, []);
 
-  // 2. Background check to clear UI when file expires
   useEffect(() => {
     if (!expiryTime) return;
 
@@ -82,7 +83,23 @@ function Upload() {
     return () => clearInterval(interval);
   }, [expiryTime]);
 
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      localStorage.removeItem("resumeData");
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
+
   const cancelUpload = async () => {
+    isPausedRef.current = false;
+    setPaused(false);
+    setPendingResume(null);
+
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -95,7 +112,7 @@ function Upload() {
       try {
         await axios.post(
           "http://localhost:3000/cancel-upload",
-          uploadMetaRef.current,
+          uploadMetaRef.current
         );
       } catch (err) {
         console.error("Failed to clean up server data", err);
@@ -104,12 +121,137 @@ function Upload() {
 
     setStatus("Upload cancelled");
     uploadMetaRef.current = null;
+    localStorage.removeItem("resumeData");
+  };
+
+  const handlePause = () => {
+    setPaused(true);
+    isPausedRef.current = true;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+  };
+
+  const executeResume = async (activeFile, meta) => {
+    setPaused(false);
+    isPausedRef.current = false;
+    setLoading(true);
+    setStatus("Auto-resuming upload...");
+
+    abortControllerRef.current = new AbortController();
+    const reqConfig = { signal: abortControllerRef.current.signal };
+
+    try {
+      const totalParts = Math.ceil(activeFile.size / meta.partsize);
+
+      const res = await axios.post("http://localhost:3000/multipart", {
+        key: meta.key,
+        uploadId: meta.uploadId,
+        parts: totalParts,
+      });
+
+      const urls = res.data.urls;
+      const completedParts = [...uploadedParts];
+      let totalBytesUploaded = 0;
+
+      for (let i = 0; i < urls.length; i++) {
+        if (isPausedRef.current) {
+          setStatus("Paused");
+          setLoading(false);
+          return;
+        }
+
+        if (completedParts.some((p) => p.PartNumber === i + 1)) {
+          totalBytesUploaded += meta.partsize;
+          continue;
+        }
+
+        const start = i * meta.partsize;
+        const end = Math.min(start + meta.partsize, activeFile.size);
+        const chunk = activeFile.slice(start, end);
+
+        const chunkRes = await axios.put(urls[i], chunk, {
+          ...reqConfig,
+          onUploadProgress: (e) => {
+            const currentOverallLoaded = totalBytesUploaded + e.loaded;
+            const percent = Math.round(
+              (currentOverallLoaded * 100) / activeFile.size
+            );
+            setProgress(percent);
+            setStatus(`Uploading part ${i + 1}/${totalParts}`);
+          },
+        });
+
+        const etag = chunkRes.headers.etag || chunkRes.headers.ETag;
+
+        await axios.post("http://localhost:3000/save-progress", {
+          id: meta.id,
+          partNumber: i + 1,
+        });
+
+        completedParts.push({
+          PartNumber: i + 1,
+          ETag: etag,
+        });
+
+        setUploadedParts([...completedParts]);
+        totalBytesUploaded += chunk.size;
+      }
+
+      setStatus("Finalizing upload...");
+
+      await axios.post(
+        "http://localhost:3000/completeMultipart",
+        {
+          uploadId: meta.uploadId,
+          key: meta.key,
+          parts: completedParts,
+        },
+        reqConfig
+      );
+
+      localStorage.removeItem("resumeData");
+
+      let finalLink = `http://localhost:5173/download/${meta.id}`;
+      let expiry = activeFile.size / (1024 * 1024) < 10 ? 3600 : 86400;
+      let expireTime = Date.now() + expiry * 1000;
+
+      setFileId(meta.id);
+      setDownloadLink(finalLink);
+      setExpiryTime(expireTime);
+      setInitialTime(expiry);
+      setQrCode(meta.qrCode);
+      localStorage.setItem(
+        "uploadData",
+        JSON.stringify({
+          uploading: false,
+          id: meta.id,
+          link: finalLink,
+          expiry: expireTime,
+          qrCode: meta.qrCode,
+          initialTime: expiry,
+        })
+      );
+
+      setReady(true);
+      setStatus("");
+      uploadMetaRef.current = null;
+    } catch (err) {
+      if (axios.isCancel(err)) {
+        if (isPausedRef.current) setStatus("Paused");
+        else console.log("Resume cancelled");
+      } else {
+        console.error(err);
+        setStatus("Resume failed. Try again.");
+      }
+    } finally {
+      if (!isPausedRef.current) setLoading(false);
+    }
   };
 
   const handleUpload = async () => {
     let activeFile = file;
 
-    // --- BULLETPROOF TEXT-TO-FILE CONVERSION ---
     if (!activeFile && textInput.trim()) {
       let finalName = textFileName.trim() || "shared-message.txt";
       if (!finalName.includes(".")) {
@@ -130,7 +272,20 @@ function Upload() {
       setStatus("Please provide a file or text content, and a password.");
       return;
     }
+    if (
+      paused &&
+      uploadMetaRef.current &&
+      uploadMetaRef.current.strategy === "multipart"
+    ) {
+      const meta = JSON.parse(localStorage.getItem("resumeData"));
+      if (meta) {
+        executeResume(activeFile, meta);
+        return;
+      }
+    }
 
+    setPaused(false);
+    isPausedRef.current = false;
     setLoading(true);
     setProgress(0);
     setStatus("Initializing...");
@@ -140,7 +295,7 @@ function Upload() {
 
     try {
       const fileSizeMB = activeFile.size / (1024 * 1024);
-      let expiry = fileSizeMB < 10 ? 3600 : 86400; // 3600s = 1 hr, 86400s = 1 day
+      let expiry = fileSizeMB < 10 ? 3600 : 86400;
 
       const res = await axios.post(
         "http://localhost:3000/geturl",
@@ -151,10 +306,26 @@ function Upload() {
           filesize: activeFile.size,
           expiry: expiry,
         },
-        reqConfig,
+        reqConfig
       );
 
       const { strategy, uploadUrl, id, qrDataUrl, partsize, key } = res.data;
+
+      if (strategy === "multipart") {
+        localStorage.setItem(
+          "resumeData",
+          JSON.stringify({
+            id,
+            key,
+            uploadId: uploadUrl,
+            partsize,
+            fileSize: activeFile.size,
+            fileName: activeFile.name,
+            qrCode: qrDataUrl,
+            timestamp: Date.now(),
+          })
+        );
+      }
 
       uploadMetaRef.current = {
         id,
@@ -183,14 +354,20 @@ function Upload() {
         const multiRes = await axios.post(
           "http://localhost:3000/multipart",
           { key, uploadId, parts: totalParts },
-          reqConfig,
+          reqConfig
         );
 
         const urls = multiRes.data.urls;
-        const uploadedParts = [];
         let totalBytesUploaded = 0;
+        const uploadedPartsList = [];
 
         for (let i = 0; i < urls.length; i++) {
+          if (isPausedRef.current) {
+            setStatus("Paused");
+            setLoading(false);
+            return;
+          }
+
           const start = i * partsize;
           const end = Math.min(start + partsize, activeFile.size);
           const chunk = activeFile.slice(start, end);
@@ -200,25 +377,35 @@ function Upload() {
             onUploadProgress: (e) => {
               const currentOverallLoaded = totalBytesUploaded + e.loaded;
               const percent = Math.round(
-                (currentOverallLoaded * 100) / activeFile.size,
+                (currentOverallLoaded * 100) / activeFile.size
               );
               setProgress(percent);
               setStatus(`Uploading part ${i + 1}/${totalParts}`);
             },
           });
-
-          totalBytesUploaded += chunk.size;
           const etag = chunkRes.headers.etag || chunkRes.headers.ETag;
-          uploadedParts.push({ PartNumber: i + 1, ETag: etag });
+          await axios.post("http://localhost:3000/save-progress", {
+            id,
+            partNumber: i + 1,
+          });
+
+          uploadedPartsList.push({
+            PartNumber: i + 1,
+            ETag: etag,
+          });
+          setUploadedParts([...uploadedPartsList]);
+          totalBytesUploaded += chunk.size;
         }
 
         setStatus("Finalizing upload...");
 
         await axios.post(
           "http://localhost:3000/completeMultipart",
-          { uploadId, key, parts: uploadedParts },
-          reqConfig,
+          { uploadId, key, parts: uploadedPartsList },
+          reqConfig
         );
+
+        localStorage.removeItem("resumeData");
       }
 
       setFileId(id);
@@ -236,7 +423,7 @@ function Upload() {
           link: finalLink,
           expiry: expireTime,
           initialTime: expiry,
-        }),
+        })
       );
 
       setReady(true);
@@ -244,13 +431,14 @@ function Upload() {
       uploadMetaRef.current = null;
     } catch (err) {
       if (axios.isCancel(err)) {
-        console.log("Upload cancelled successfully");
+        if (isPausedRef.current) setStatus("Paused");
+        else console.log("Upload cancelled successfully");
       } else {
         console.error(err);
         setStatus("Upload failed. Try again.");
       }
     } finally {
-      setLoading(false);
+      if (!isPausedRef.current) setLoading(false);
     }
   };
 
@@ -273,9 +461,9 @@ function Upload() {
     setStatus("");
     setProgress(0);
     setExpiryTime(null);
+    setPendingResume(null);
   };
 
-  // Drag and drop handlers for the single box
   const handleDragOver = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -336,7 +524,60 @@ function Upload() {
             </p>
           </div>
 
-          {/* SINGLE UNIFIED INPUT BOX */}
+          {pendingResume && !loading && (
+            <div
+              style={{
+                background: "#fef2f2",
+                border: "1px solid #fecaca",
+                borderRadius: "12px",
+                padding: "16px",
+                marginBottom: "20px",
+                display: "flex",
+                gap: "12px",
+                alignItems: "flex-start",
+              }}
+            >
+              <AlertTriangle
+                size={20}
+                color="#ef4444"
+                style={{ flexShrink: 0, marginTop: "2px" }}
+              />
+              <div>
+                <p
+                  style={{
+                    margin: "0 0 4px",
+                    fontWeight: "600",
+                    color: "#991b1b",
+                    fontSize: "0.9rem",
+                  }}
+                >
+                  Upload Interrupted
+                </p>
+                <p style={{ margin: 0, color: "#b91c1c", fontSize: "0.85rem" }}>
+                  Select or drop{" "}
+                  <strong style={{ wordBreak: "break-all" }}>
+                    {pendingResume.fileName}
+                  </strong>{" "}
+                  below to automatically resume your session.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setPendingResume(null);
+                  localStorage.removeItem("resumeData");
+                }}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "#ef4444",
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+
           <div
             onDragOver={handleDragOver}
             onDrop={handleDrop}
@@ -349,7 +590,6 @@ function Upload() {
               position: "relative",
             }}
           >
-            {/* Hidden file input triggered by the button */}
             <input
               type="file"
               ref={fileInputRef}
@@ -360,7 +600,6 @@ function Upload() {
             />
 
             {file ? (
-              // --- FILE SELECTED UI ---
               <div
                 style={{
                   display: "flex",
@@ -406,7 +645,6 @@ function Upload() {
                 </p>
               </div>
             ) : (
-              // --- TEXT OR BROWSE UI ---
               <div style={{ display: "flex", flexDirection: "column" }}>
                 {textInput.length > 0 && (
                   <input
@@ -511,39 +749,35 @@ function Upload() {
             />
           </div>
 
-          <button
-            onClick={handleUpload}
-            disabled={loading || !password || (!file && !textInput.trim())}
-            style={{
-              width: "100%",
-              padding: "14px",
-              borderRadius: "8px",
-              backgroundColor: "#6366f1",
-              color: "white",
-              border: "none",
-              fontWeight: "600",
-              cursor:
-                loading || !password || (!file && !textInput.trim())
-                  ? "not-allowed"
-                  : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "10px",
-              opacity:
-                loading || !password || (!file && !textInput.trim()) ? 0.7 : 1,
-            }}
-          >
-            {loading ? (
-              <Loader2 className="animate-spin" size={20} />
-            ) : (
+          {!loading && !paused && !pendingResume && (
+            <button
+              onClick={handleUpload}
+              disabled={!password || (!file && !textInput.trim())}
+              style={{
+                width: "100%",
+                padding: "14px",
+                borderRadius: "8px",
+                backgroundColor: "#6366f1",
+                color: "white",
+                border: "none",
+                fontWeight: "600",
+                cursor:
+                  !password || (!file && !textInput.trim())
+                    ? "not-allowed"
+                    : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "10px",
+                opacity: !password || (!file && !textInput.trim()) ? 0.7 : 1,
+              }}
+            >
               <UploadCloud size={20} />
-            )}
-            {loading ? "Uploading..." : "Encrypt & Upload"}
-          </button>
+              Encrypt & Upload
+            </button>
+          )}
 
-          {/* CANCEL BUTTON AND PROGRESS SECTION */}
-          {loading && (
+          {(loading || paused) && (
             <div style={{ marginTop: "24px" }}>
               <div
                 style={{
@@ -571,11 +805,13 @@ function Upload() {
                       fontWeight: "600",
                     }}
                   >
-                    <Loader2
-                      className="animate-spin"
-                      size={16}
-                      color="#6366f1"
-                    />{" "}
+                    {!paused && (
+                      <Loader2
+                        className="animate-spin"
+                        size={16}
+                        color="#6366f1"
+                      />
+                    )}
                     {status}
                   </span>
                   <span style={{ color: "#6366f1", fontWeight: "800" }}>
@@ -602,21 +838,39 @@ function Upload() {
                 </div>
               </div>
 
-              <button
-                onClick={cancelUpload}
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  borderRadius: "8px",
-                  border: "1px solid #ef4444",
-                  background: "#fee2e2",
-                  color: "#b91c1c",
-                  fontWeight: "600",
-                  cursor: "pointer",
-                }}
-              >
-                Cancel Upload
-              </button>
+              <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
+                <button
+                  onClick={paused ? handleUpload : handlePause}
+                  style={{
+                    flex: 1,
+                    padding: "12px",
+                    borderRadius: "8px",
+                    border: "1px solid #f59e0b",
+                    background: "#fef3c7",
+                    color: "#92400e",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  {paused ? "Resume" : "Pause"}
+                </button>
+
+                <button
+                  onClick={cancelUpload}
+                  style={{
+                    flex: 1,
+                    padding: "12px",
+                    borderRadius: "8px",
+                    border: "1px solid #ef4444",
+                    background: "#fee2e2",
+                    color: "#b91c1c",
+                    fontWeight: "600",
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           )}
         </>

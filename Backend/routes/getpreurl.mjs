@@ -62,7 +62,7 @@ route.post('/geturl',rate, async (req, res) => {
           key: key,
         },
         opts: {
-          delay: 2*60*1000
+          delay: expiry*1000
         }
       },
       {
@@ -72,7 +72,7 @@ route.post('/geturl',rate, async (req, res) => {
           password: hashedpassword
         },
         opts: {
-          delay: 2*60*1000
+          delay: expiry*1000
         }
       }
     ]);
